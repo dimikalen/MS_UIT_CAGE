@@ -17,14 +17,95 @@ pyth=/Applications/python_scriptsuc2otutab.py
 min=250
 #max sequence length 
 max=255
+#forward
+	#trim left
+trimleftf=13
+	#trunc length
+trunclenf=224
+#reverse
+	#trim left
+trimleftr=13
+	#trunc length	    
+trunclenr=155
 
 cd $project_home
 
-#####################################Unzip_fastq#########################
+mkdir $name.OTUS
+mkdir $name.ZOTUS
+
+#####################################ZIP&move#########################
+	gzip *.fastq
+	cp *.gz $name.OTUS/
+
+#####################################IMPORT in qiime2#########################
+cp *.gz $name.ZOTUS
+cd $name.ZOTUS
+source activate qiime2
+
+qiime tools import \
+  --type 'SampleData[PairedEndSequencesWithQuality]' \
+  --input-path ./ \
+  --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+  --output-path $name.demux-paired-end.qza
+
+rm *.fastq.gz
+
+qiime demux summarize \
+  --i-data $name.demux-paired-end.qza \
+  --o-visualization $name.demux.qzv
+  
+#####################################DADA2#########################
+
+qiime dada2 denoise-paired \
+  --i-demultiplexed-seqs $name.demux-paired-end.qza \
+  --p-trim-left-f $trimleftf \
+  --p-trim-left-r $trimleftr \
+  --p-trunc-len-f $trunclenf \
+  --p-trunc-len-r $trunclenr \
+  --p-n-threads $cpu \
+  --p-max-ee 1 \
+  --o-table $name.ZOTUS.table.qza \
+  --o-representative-sequences $name.ZOTUS.rep-seqs.qza \
+  --o-denoising-stats $name.ZOTUS.denoising-stats.qza
+
+#####################################export_files#########################
+qiime tools export \
+  --input-path $name.ZOTUS.table.qza \
+  --output-path $name.ZOTUS.table
+
+qiime tools export \
+  --input-path $name.ZOTUS.rep-seqs.qza \
+  --output-path $name.ZOTUS.rep-seqs
+
+qiime tools export \
+  --input-path $name.ZOTUS.denoising-stats.qza \
+  --output-path $name.ZOTUS.denoising-stats
+
+mkdir $project_home/$name.ZOTUs.results
+
+mv $name.ZOTUS.table/feature-table.biom $project_home//$name.ZOTUs.results/$name.ZOTUS.biom
+mv $name.ZOTUS.rep-seqs/dna-sequences.fasta $project_home//$name.ZOTUs.results/$name.ZOTUS.fa
+mv $name.ZOTUS.denoising-stats/stats.tsv $project_home//$name.ZOTUs.results/$name.DADA2.stats.tsv
+
+#######################################ASSIGN_TAXONOMY###############################
+cd $project_home/$name.ZOTUs.results
+
+mothur "#classify.seqs(fasta=$name.ZOTUS.fa, reference=$ref, taxonomy=$tax, cutoff=75, processors=$cpu)"
+
+biom add-metadata --sc-separated taxonomy --observation-header OTUID,taxonomy --observation-metadata-fp $name.*.wang.taxonomy -i $name.ZOTUS.biom -o $name.ZOTUS.taxonomy.biom
+
+biom convert -i $name.ZOTUS.taxonomy.biom -o $name.ZOTUS.taxonomy.txt --to-tsv --header-key taxonomy --table-type "OTU table"
+
+rm $name.*.wang.taxonomy
+rm $name.*.wang.tax.summary
+rm $name.ZOTUS.biom
+rm mothur*
+
+#####################################UNZIP_Rename#########################	
+cd $project_home/$name.OTUS
+
+gunzip *.gz
 	
-	gunzip *.gz
-	
-#####################################Rename#########################	
 for i in *.fastq; do mv $i $(echo $i | sed 's/\_/\./g'); done
 
 #####################################Store the first 3 column, before RX #########################
@@ -37,6 +118,8 @@ ls *\.R1\.*\.fastq |cut -d . -f 1,2,3 > list.txt
   		bbmerge.sh in1=$sample.R1.$RX in2=$sample.R2.$RX out=$sample.merged.fq
   		vsearch -fastq_filter $sample.merged.fq -fastaout $sample.filtered.fa -fastq_maxee 1 -threads $cpu
 	done < list.txt
+
+rm *.fastq
 
 #######################################SAMPLES_LABELING#############################
 
@@ -100,9 +183,9 @@ done
 
 	biom convert -i $name.taxonomy.biom -o $name.taxonomy.txt --to-tsv --header-key taxonomy --table-type "OTU table"
 
-	mkdir $name.results
-	mv  $name.taxonomy.txt $name.result/
-	mv  $name.taxonomy.biom $name.result/
-	mv  $name.otus$id.fa $name.result/
+	mkdir $project_home/$name.OTUs.results
+	mv  $name.taxonomy.txt $project_home/$name.OTUs.results
+	mv  $name.taxonomy.biom $project_home/$name.OTUs.results
+	mv  $name.otus$OTU.fa $project_home/$name.OTUs.results
 
 exit
